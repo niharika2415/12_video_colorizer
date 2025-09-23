@@ -11,9 +11,12 @@ from io import BytesIO
 from PIL import Image
 
 # URL of the trained model weights.
+# The format for a public Google Drive file is:
+# "https://drive.google.com/uc?export=download&id={your_file_id}"
 WEIGHTS_URL = "https://drive.google.com/uc?export=download&id=1fN1r5vyefdF-wsGdrfEA3oQcTz1xtg7_"
 
-# Model Building and Loading Function
+# --- Model Building and Loading Function ---
+
 @st.cache_resource
 def load_trained_model():
     """
@@ -99,7 +102,8 @@ def colorize_frame_tf(model, frame):
     
     return colorized_frame
 
-# Streamlit UI and Logic
+# --- Streamlit UI and Logic ---
+
 st.title("TensorFlow Video Colorizer")
 st.markdown("Upload a video to see it colorized in real-time using a TensorFlow model.")
 
