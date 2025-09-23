@@ -4,55 +4,36 @@ import numpy as np
 import tempfile
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras import layers
 import os
-import gdown  
+import gdown  # ✅ for downloading from Google Drive
 from PIL import Image
 
-# Google Drive file ID 
-FILE_ID = "1fN1r5vyefdF-wsGdrfEA3oQcTz1xtg7_"
-WEIGHTS_PATH = "colorizer_weights.h5"
+# Google Drive File ID
+FILE_ID = "1gZSAAAUDLLyGLN8Ylk7LrqvcjfF2L0Gl"  
+MODEL_PATH = "colorizer_model.h5"
 
-# Model Building and Loading Function
-
+# Model Loading Function
 @st.cache_resource
 def load_trained_model():
     """
-    Builds the model architecture and loads the pre-trained weights.
-    This function is cached to run only once.
+    Loads the pre-trained full model (.h5) from Google Drive.
+    This function is cached to avoid re-downloading/reloading.
     """
-    # Define the model architecture
-    model = keras.Sequential([
-        keras.Input(shape=(256, 256, 1)),
-        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
-        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
-        layers.UpSampling2D((2, 2)),
-        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-        layers.UpSampling2D((2, 2)),
-        layers.Conv2D(2, (3, 3), activation='tanh', padding='same')
-    ], name='colorizer')
-
     try:
-        # Download weights with gdown if not already present
-        if not os.path.exists(WEIGHTS_PATH):
-            st.info("Downloading trained model weights from Google Drive...")
-            gdown.download(f"https://drive.google.com/uc?id={FILE_ID}", WEIGHTS_PATH, quiet=False)
-            st.success("Weights downloaded successfully!")
+        # Download model if not already present
+        if not os.path.exists(MODEL_PATH):
+            st.info("Downloading trained model from Google Drive...")
+            gdown.download(f"https://drive.google.com/uc?id={FILE_ID}", MODEL_PATH, quiet=False)
+            st.success("Model downloaded successfully!")
 
-        # Load weights
-        model.load_weights(WEIGHTS_PATH)
+        # Load full model
+        model = keras.models.load_model(MODEL_PATH)
         st.success("Model loaded with trained weights!")
-    except Exception as e:
-        st.warning(f"Could not download or load weights. Running with untrained model. Error: {e}")
+        return model
 
-    return model
+    except Exception as e:
+        st.error(f"Could not load trained model. Error: {e}")
+        return None
 
 
 def colorize_frame_tf(model, frame):
@@ -71,15 +52,15 @@ def colorize_frame_tf(model, frame):
     # Predict the color channels
     ab_predicted = model.predict(scaled_l, verbose=0)[0]
     
-    # Resize the predicted color channels back to the original frame size
+    # Resize predicted channels back to original frame size
     ab_predicted = cv2.resize(ab_predicted, (frame.shape[1], frame.shape[0]))
     
-    # Combine the original L channel with the predicted ab channels
+    # Combine L channel with predicted ab channels
     colorized_lab = np.zeros((frame.shape[0], frame.shape[1], 3), dtype=np.uint8)
     colorized_lab[:, :, 0] = l_channel
     colorized_lab[:, :, 1:] = ab_predicted * 127 + 128
     
-    # Convert from LAB to BGR for display
+    # Convert LAB → BGR
     colorized_frame = cv2.cvtColor(colorized_lab, cv2.COLOR_LAB2BGR)
     
     return colorized_frame
@@ -90,19 +71,18 @@ def colorize_frame_tf(model, frame):
 st.title("TensorFlow Video Colorizer")
 st.markdown("Upload a video to see it colorized in real-time using a TensorFlow model.")
 
-# Load the model with trained weights
+# Load the model
 model = load_trained_model()
 
 # File uploader widget
 uploaded_file = st.file_uploader("Choose a video file...", type=['mp4', 'mov', 'avi'])
 
-if uploaded_file is not None:
+if uploaded_file is not None and model is not None:
     try:
-        # Use a temporary file to save the uploaded video
+        # Save uploaded video temporarily
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
         tfile.write(uploaded_file.read())
         
-        # Open the video file with OpenCV
         cap = cv2.VideoCapture(tfile.name)
         
         if not cap.isOpened():
@@ -116,20 +96,19 @@ if uploaded_file is not None:
                 if not ret:
                     break
                 
-                # Apply the colorization model
+                # Apply model
                 processed_frame = colorize_frame_tf(model, frame)
                 
-                # Convert color space for Streamlit display
+                # Convert for Streamlit display
                 processed_frame = cv2.cvtColor(processed_frame.astype(np.uint8), cv2.COLOR_BGR2RGB)
                 
-                # Display the processed frame
                 video_placeholder.image(processed_frame, use_column_width=True)
             
             st.success("Video processing complete!")
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
-        st.info("Please ensure your video file is not corrupted and is in a supported format.")
+        st.info("Please ensure your video file is valid and supported.")
 
     finally:
         if 'cap' in locals() and cap.isOpened():
