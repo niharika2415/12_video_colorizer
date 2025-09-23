@@ -2,90 +2,131 @@ import streamlit as st
 import cv2
 import numpy as np
 import tempfile
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import os
+import requests
+from io import BytesIO
+from PIL import Image
 
-# Colorization Functions
+# URL of the trained model weights.
+# You will need to replace this with the URL to your hosted `colorizer_weights.h5` file.
+WEIGHTS_URL = "https://example.com/your-repo/colorizer_weights.h5"
 
-def colorize_sepia(grayscale_frame):
-    """
-    Applies a sepia tone effect to a grayscale frame.
-    This is a simple matrix multiplication that simulates an older camera tone.
-    """
-    # Create a 3-channel sepia matrix
-    sepia_matrix = np.array([
-        [0.272, 0.534, 0.131],
-        [0.349, 0.686, 0.168],
-        [0.393, 0.769, 0.189]
-    ], dtype=np.float32)
-    gray_3_channel = cv2.merge([grayscale_frame, grayscale_frame, grayscale_frame])
-    sepia_frame = cv2.transform(gray_3_channel, sepia_matrix)
-    return sepia_frame
+# --- Model Building and Loading Function ---
 
-def colorize_custom_hue(grayscale_frame):
+@st.cache_resource
+def load_trained_model():
     """
-    Applies a custom blueish hue to a grayscale frame.
-    This is a simple method that merges a grayscale image with a constant color.
+    Builds the model architecture and loads the pre-trained weights.
+    This function is cached to run only once.
     """
-    # Create a 3-channel image with the grayscale frame in one channel and
-    # a custom color in the others to create a tint.
-    # We use a blue-ish tint in this example (B, G, R)
-    tinted_frame = cv2.merge([grayscale_frame, grayscale_frame * 0.5, grayscale_frame * 0.1])
-    return tinted_frame
+    # Define the model architecture
+    model = keras.Sequential([
+        keras.Input(shape=(256, 256, 1)),
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.UpSampling2D((2, 2)),
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.UpSampling2D((2, 2)),
+        layers.Conv2D(2, (3, 3), activation='tanh', padding='same')
+    ], name='colorizer')
+
+    # Download weights
+    try:
+        if not os.path.exists('colorizer_weights.h5'):
+            st.info("Downloading trained model weights...")
+            response = requests.get(WEIGHTS_URL)
+            response.raise_for_status()
+            with open('colorizer_weights.h5', 'wb') as f:
+                f.write(response.content)
+            st.success("Weights downloaded successfully!")
+        
+        # Load weights
+        model.load_weights('colorizer_weights.h5')
+        st.success("Model loaded with trained weights!")
+    except Exception as e:
+        st.warning(f"Could not download or load weights from {WEIGHTS_URL}. Running with untrained model. Error: {e}")
+
+    return model
+
+def colorize_frame_tf(model, frame):
+    """
+    Colorizes a single frame using the TensorFlow model.
+    """
+    lab_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l_channel = lab_frame[:, :, 0]
+    scaled_l = cv2.resize(l_channel, (256, 256))
+    scaled_l = scaled_l.astype("float32") / 255.0
+    scaled_l = np.expand_dims(scaled_l, axis=-1)
+    scaled_l = np.expand_dims(scaled_l, axis=0)
+    ab_predicted = model.predict(scaled_l, verbose=0)[0]
+    ab_predicted = cv2.resize(ab_predicted, (frame.shape[1], frame.shape[0]))
+    colorized_lab = np.zeros((frame.shape[0], frame.shape[1], 3), dtype=np.uint8)
+    colorized_lab[:, :, 0] = l_channel
+    colorized_lab[:, :, 1:] = ab_predicted * 127 + 128
+    colorized_frame = cv2.cvtColor(colorized_lab, cv2.COLOR_LAB2BGR)
+    
+    return colorized_frame
 
 # --- Streamlit UI and Logic ---
 
-st.title("Real-time Video Colorizer")
-st.markdown("Upload a video and choose a filter to see the effect in real-time.")
-
-# Sidebar for filter selection
-st.sidebar.title("Filter Selection")
-filter_name = st.sidebar.radio(
-    "Choose a colorization filter:",
-    ('Original', 'Sepia', 'Custom Hue')
-)
+st.title("TensorFlow Video Colorizer")
+st.markdown("Upload a video to see it colorized in real-time using a TensorFlow model.")
 
 # File uploader widget
-uploaded_file = st.file_uploader("Upload a video file (MP4)", type=['mp4'])
+uploaded_file = st.file_uploader("Choose a video file...", type=['mp4', 'mov', 'avi'])
 
 if uploaded_file is not None:
-    # Use a temporary file to save the uploaded video
-    tfile = tempfile.NamedTemporaryFile(delete=False)
-    tfile.write(uploaded_file.read())
-    
-    # Open the video file with OpenCV
-    cap = cv2.VideoCapture(tfile.name)
-    
-    # Check if the video file was opened successfully
-    if not cap.isOpened():
-        st.error("Error: Could not open the video file.")
-    else:
-        # Create a placeholder to display the video frames
-        video_placeholder = st.empty()
+    try:
+        # Load the model with trained weights
+        model = load_trained_model()
         
-        # Loop through the video frames
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        # Use a temporary file to save the uploaded video
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+        tfile.write(uploaded_file.read())
+        
+        # Open the video file with OpenCV
+        cap = cv2.VideoCapture(tfile.name)
+        
+        if not cap.isOpened():
+            st.error("Error: Could not open the video file. Please check the format.")
+        else:
+            st.subheader("Colorized Video")
+            video_placeholder = st.empty()
             
-            # Convert frame to grayscale for processing
-            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # Apply the colorization model
+                processed_frame = colorize_frame_tf(model, frame)
+                
+                # Convert color space for Streamlit display
+                processed_frame = cv2.cvtColor(processed_frame.astype(np.uint8), cv2.COLOR_BGR2RGB)
+                
+                # Display the processed frame
+                video_placeholder.image(processed_frame, use_column_width=True)
             
-            # Apply the selected filter
-            if filter_name == 'Sepia':
-                processed_frame = colorize_sepia(gray_frame)
-            elif filter_name == 'Custom Hue':
-                processed_frame = colorize_custom_hue(gray_frame)
-            else:
-                processed_frame = cv2.cvtColor(gray_frame, cv2.COLOR_GRAY2BGR)
-            
-            # Convert color space for Streamlit display
-            processed_frame = cv2.cvtColor(processed_frame.astype(np.uint8), cv2.COLOR_BGR2RGB)
-            
-            # Display the processed frame
-            video_placeholder.image(processed_frame, use_column_width=True)
+            st.success("Video processing complete!")
 
-    # Release video capture and close temporary file
-    cap.release()
-    tfile.close()
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+        st.info("Please ensure your video file is not corrupted and is in a supported format.")
 
-st.info("The application will process video frames after you upload a file.")
+    finally:
+        if 'cap' in locals() and cap.isOpened():
+            cap.release()
+        if 'tfile' in locals():
+            os.unlink(tfile.name)
+
+st.info("The application will become active after you upload a video file. It will build the model architecture, but it will not produce meaningful colorization without trained weights.")
