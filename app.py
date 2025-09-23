@@ -128,5 +128,3 @@ if uploaded_file is not None:
             cap.release()
         if 'tfile' in locals():
             os.unlink(tfile.name)
-
-st.info("The application will become active after you upload a video file. It will build the model architecture, but it will not produce meaningful colorization without trained weights.")
