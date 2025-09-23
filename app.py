@@ -12,6 +12,8 @@ from PIL import Image
 
 # URL of the trained model weights.
 # You will need to replace this with the URL to your hosted `colorizer_weights.h5` file.
+# The format should be a direct download link, e.g., for Google Drive:
+# "https://drive.google.com/uc?export=download&id={your_file_id}"
 WEIGHTS_URL = "https://example.com/your-repo/colorizer_weights.h5"
 
 # --- Model Building and Loading Function ---
@@ -42,19 +44,33 @@ def load_trained_model():
 
     # Download weights
     try:
+        # Check if the file already exists to avoid re-downloading
         if not os.path.exists('colorizer_weights.h5'):
             st.info("Downloading trained model weights...")
-            response = requests.get(WEIGHTS_URL)
-            response.raise_for_status()
+            response = requests.get(WEIGHTS_URL, allow_redirects=True, stream=True)
+            response.raise_for_status() # Raise an error for bad status codes
+
+            # Use a progress bar for large files
+            total_size = int(response.headers.get('content-length', 0))
+            bytes_downloaded = 0
+            progress_bar = st.progress(0)
+            
             with open('colorizer_weights.h5', 'wb') as f:
-                f.write(response.content)
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        bytes_downloaded += len(chunk)
+                        progress = min(bytes_downloaded / total_size, 1.0)
+                        progress_bar.progress(progress)
+            
+            progress_bar.empty()
             st.success("Weights downloaded successfully!")
         
         # Load weights
         model.load_weights('colorizer_weights.h5')
         st.success("Model loaded with trained weights!")
     except Exception as e:
-        st.warning(f"Could not download or load weights from {WEIGHTS_URL}. Running with untrained model. Error: {e}")
+        st.warning(f"Could not download or load weights from the specified URL. Running with untrained model. Error: {e}")
 
     return model
 
@@ -64,15 +80,25 @@ def colorize_frame_tf(model, frame):
     """
     lab_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l_channel = lab_frame[:, :, 0]
+    
+    # Pre-process the frame for the model
     scaled_l = cv2.resize(l_channel, (256, 256))
     scaled_l = scaled_l.astype("float32") / 255.0
     scaled_l = np.expand_dims(scaled_l, axis=-1)
     scaled_l = np.expand_dims(scaled_l, axis=0)
+    
+    # Predict the color channels
     ab_predicted = model.predict(scaled_l, verbose=0)[0]
+    
+    # Resize the predicted color channels back to the original frame size
     ab_predicted = cv2.resize(ab_predicted, (frame.shape[1], frame.shape[0]))
+    
+    # Combine the original L channel with the predicted ab channels
     colorized_lab = np.zeros((frame.shape[0], frame.shape[1], 3), dtype=np.uint8)
     colorized_lab[:, :, 0] = l_channel
     colorized_lab[:, :, 1:] = ab_predicted * 127 + 128
+    
+    # Convert from LAB to BGR for display
     colorized_frame = cv2.cvtColor(colorized_lab, cv2.COLOR_LAB2BGR)
     
     return colorized_frame
@@ -82,14 +108,14 @@ def colorize_frame_tf(model, frame):
 st.title("TensorFlow Video Colorizer")
 st.markdown("Upload a video to see it colorized in real-time using a TensorFlow model.")
 
+# Load the model with trained weights
+model = load_trained_model()
+
 # File uploader widget
 uploaded_file = st.file_uploader("Choose a video file...", type=['mp4', 'mov', 'avi'])
 
 if uploaded_file is not None:
     try:
-        # Load the model with trained weights
-        model = load_trained_model()
-        
         # Use a temporary file to save the uploaded video
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
         tfile.write(uploaded_file.read())
@@ -128,3 +154,5 @@ if uploaded_file is not None:
             cap.release()
         if 'tfile' in locals():
             os.unlink(tfile.name)
+else:
+    st.info("Upload a video to get started.")
