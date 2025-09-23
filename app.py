@@ -6,16 +6,14 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 import os
-import requests
-from io import BytesIO
+import gdown  
 from PIL import Image
 
-# URL of the trained model weights.
-# The format for a public Google Drive file is:
-# "https://drive.google.com/uc?export=download&id={your_file_id}"
-WEIGHTS_URL = "https://drive.google.com/uc?export=download&id=1fN1r5vyefdF-wsGdrfEA3oQcTz1xtg7_"
+# Google Drive file ID 
+FILE_ID = "1fN1r5vyefdF-wsGdrfEA3oQcTz1xtg7_"
+WEIGHTS_PATH = "colorizer_weights.h5"
 
-# --- Model Building and Loading Function ---
+# Model Building and Loading Function
 
 @st.cache_resource
 def load_trained_model():
@@ -41,37 +39,21 @@ def load_trained_model():
         layers.Conv2D(2, (3, 3), activation='tanh', padding='same')
     ], name='colorizer')
 
-    # Download weights
     try:
-        # Check if the file already exists to avoid re-downloading
-        if not os.path.exists('colorizer_weights.h5'):
-            st.info("Downloading trained model weights...")
-            response = requests.get(WEIGHTS_URL, allow_redirects=True, stream=True)
-            response.raise_for_status() # Raise an error for bad status codes
-
-            # Use a progress bar for large files
-            total_size = int(response.headers.get('content-length', 0))
-            bytes_downloaded = 0
-            progress_bar = st.progress(0)
-            
-            with open('colorizer_weights.h5', 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        bytes_downloaded += len(chunk)
-                        progress = min(bytes_downloaded / total_size, 1.0)
-                        progress_bar.progress(progress)
-            
-            progress_bar.empty()
+        # Download weights with gdown if not already present
+        if not os.path.exists(WEIGHTS_PATH):
+            st.info("Downloading trained model weights from Google Drive...")
+            gdown.download(f"https://drive.google.com/uc?id={FILE_ID}", WEIGHTS_PATH, quiet=False)
             st.success("Weights downloaded successfully!")
-        
+
         # Load weights
-        model.load_weights('colorizer_weights.h5')
+        model.load_weights(WEIGHTS_PATH)
         st.success("Model loaded with trained weights!")
     except Exception as e:
-        st.warning(f"Could not download or load weights from the specified URL. Running with untrained model. Error: {e}")
+        st.warning(f"Could not download or load weights. Running with untrained model. Error: {e}")
 
     return model
+
 
 def colorize_frame_tf(model, frame):
     """
@@ -102,7 +84,8 @@ def colorize_frame_tf(model, frame):
     
     return colorized_frame
 
-# --- Streamlit UI and Logic ---
+
+# Streamlit UI and Logic
 
 st.title("TensorFlow Video Colorizer")
 st.markdown("Upload a video to see it colorized in real-time using a TensorFlow model.")
