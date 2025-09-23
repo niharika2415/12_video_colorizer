@@ -1,3 +1,6 @@
 streamlit
 opencv-python
 numpy
+tensorflow
+pillow
+requests
