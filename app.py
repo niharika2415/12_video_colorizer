@@ -22,7 +22,7 @@ def load_trained_model():
     try:
         # Download model if not already present
         if not os.path.exists(MODEL_PATH):
-            st.info("Downloading trained model from Google Drive...")
+            #st.info("Downloading trained model from Google Drive...")
             gdown.download(f"https://drive.google.com/uc?id={FILE_ID}", MODEL_PATH, quiet=False)
             st.success("Model downloaded successfully!")
 
